@@ -1,37 +1,9 @@
-function WGS84(x = 300, y = 150) {
-  if (typeof x !== 'number' || typeof y !== 'number' || isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
-    console.error('Invalid coordinates:', x, y);
-    return;
-  }
-
-  // Define projection parameters
-  proj4.defs('EPSG:4326', '+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs');
-
-  // Canvas dimensions
-  const canvasWidth = canvas.canvasMap.width;
-  const canvasHeight = canvas.canvasMap.height;
-
-  // Calculate the center of the canvas
-  const canvasCenterX = canvasWidth / 2;
-  const canvasCenterY = canvasHeight / 2;
-
-  // Adjust the coordinates to have the canvas center as (0, 0)
-  const adjustedX = x - canvasCenterX;
-  const adjustedY = canvasCenterY - y; // Reverse the direction for y to match typical Cartesian coordinates
-
-  // Convert adjusted canvas coordinates to WGS84
-  const wgs84Coords = proj4('+proj=utm +zone=33 +ellps=WGS84 +datum=WGS84 +units=m +no_defs', 'EPSG:4326', [adjustedX, adjustedY]);
-
-  // Display the adjusted WGS84 coordinates
-  console.log('Adjusted WGS84 Coordinates:', wgs84Coords);
-  console.log('Canvas: ' + x + ', ' + y);
-}
-
 $('.helpDropdown').on({
   click: function(){
     $("#helpCenter").toggle();
   }
 });
+
 $('.MapAddDropdown').on({
   click: function(){
     $('#MapAddCenter').toggle();
@@ -51,10 +23,36 @@ $("#workspaceZoom").on({
   },
 });
 
+
+class Projection{
+  constructor(canvasWidth, canvasHeight){
+      this.MIN_LONGITUDE = -180;      // Minimum X coordinate in projected space
+      this.MAX_LONGITUDE = 180;       // Maximum X coordinate in projected space
+      this.MIN_LATITUDE = -90;        // Minimum Y coordinate in projected space
+      this.MAX_LATITUDE = 90;         // Maximum Y coordinate in projected space 
+      this.width = canvasWidth;       // Width of the canvas in pixels
+      this.height = canvasHeight;     // Height of the canvas in pixels
+
+  }
+  canvasToProjected(x, y) {
+      var scaleX = (this.MAX_LONGITUDE - this.MIN_LONGITUDE) / this.width;
+      var scaleY = (this.MAX_LATITUDE - this.MIN_LATITUDE) / this.height;
+      // Applying TransFormation
+      var projectedX = this.MIN_LONGITUDE + x * scaleX;
+      var projectedY = this.MAX_LATITUDE - y * scaleY;
+
+      return { x: projectedX, y: projectedY }; // return projected corrdinate object
+    }
+  update(canvasWidth, canvasHeight){
+      this.width = canvasWidth;       // Width of the canvas in pixels
+      this.height = canvasHeight;     // Height of the canvas in pixels
+  }
+}
 class Canvas {
   constructor(canvasId = "canvas1") {
     this.canvasMap = document.getElementById(canvasId);
     this.ctx = this.canvasMap.getContext("2d");
+    this.projecter = new Projection(this.canvasMap.width, this.canvasMap.height);
     this.zoom = 1;
     this.scale = 1;
     this.mapImage = null;
@@ -66,10 +64,9 @@ class Canvas {
   setDimensions(size = 0.9) {
     const newHeight = Math.min(window.innerWidth, window.innerHeight) * size;
     const newWidth = 2 * newHeight;
-
     this.canvasMap.width = newWidth;
-    this.canvasMap.height = newHeight;
- 
+    this.canvasMap.height = newHeight; 
+    this.projecter.update(this.canvasMap.width, this.canvasMap.height);
     this.drawBaseMap();
   }
 
@@ -80,28 +77,33 @@ class Canvas {
       const cursorBefore = { x: event.clientX, y: event.clientY };
 
       if (event.deltaY < 0) {
-        if(Math.floor(this.zoom) > 500) return;
+        if (this.zoom >= 100) {
+          this.zoom = 100;
+          $('#scale').html('Scale: ' + this.zoom.toFixed(2)); 
+          this.applyTransform();
+          return;
+        }
         this.zoomIn(zoomSpeed);
       } else {
-        if(Math.floor(this.zoom) <= 1) {  
-            this.zoom = 1;
-            this.drawBaseMap(); 
-            $('#scale').html('Scale: '+(this.zoom).toPrecision(1) * 100);
-            return;    
+        if (this.zoom <= 1) {  
+          this.zoom = 1;
+          $('#scale').html('Scale: ' + this.zoom.toFixed(2));
+          this.applyTransform();       
+          return;    
         }
         this.zoomOut(zoomSpeed);
       }
+      
 
       // Adjust cursor position based on zoom
       const cursorAfter = { x: event.clientX, y: event.clientY };
       this.adjustCursorPosition(cursorBefore, cursorAfter);
       this.applyTransform();
     });
-  }
+  }   
 
   zoomIn(zoomSpeed) {
     this.zoom *= 1 + zoomSpeed;
-
     this.applyTransform();
   }
 
@@ -120,7 +122,7 @@ class Canvas {
 
   applyTransform() {
     console.log('Scale: '+this.zoom + ', size: ('+ this.canvasMap.width+', '+this.canvasMap.height+')');
-    $('#scale').html('Scale: '+(this.zoom).toPrecision(1) * 100);
+    $('#scale').html('Scale: '+(this.zoom).toFixed(2)); 
     if (!this.mapImage) {
       // Load the original image when applying the first transform
       this.addBaseMap();
@@ -161,16 +163,14 @@ class Canvas {
 }
 
 
-
 const canvas = new Canvas();
 canvas.addBaseMap();
 $('.baseMap').on({
   change: function(){
     canvas.addBaseMap();
   }
-})
-alert('width'+canvas.canvasMap.width+', Hieght: '+canvas.canvasMap.height);
-WGS84(canvas.canvasMap.width,canvas.canvasMap.height);
+}) 
+ 
 
 var points = [];
 var lines = [];
@@ -211,6 +211,9 @@ class Point {
     canvas.ctx.fillStyle = this.color;
     canvas.ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
     canvas.ctx.fill();
+    let Pointed = {}
+    Pointed = canvas.projecter.canvasToProjected(this.x, this.y);
+    $('#scale').html(Pointed.x + ', '+ Pointed.y);
   }
 }
 
@@ -299,8 +302,7 @@ canvas.canvasMap.addEventListener("click", function (event) {
   var feature = document.getElementById("featureType").value;
   let rect = canvas.canvasMap.getBoundingClientRect();
   let x = (event.clientX - rect.left);
-  let y = (event.clientY - rect.top);
-  WGS84(x,y);
+  let y = (event.clientY - rect.top); 
   switch (feature) {
     case "point":
       points.push(new Point(x, y));
